@@ -31,9 +31,9 @@ class SPLICE(nn.Module):
         super().__init__()
         self.device = device
         self.clip = clip.to(self.device) if clip else None
-        self.image_mean = image_mean.to(self.device)
-        self.text_mean = text_mean.to(self.device) if text_mean else None
-        self.dictionary = dictionary.to(self.device)
+        self.image_mean = image_mean.float().to(self.device)
+        self.text_mean = text_mean.float().to(self.device) if text_mean else None
+        self.dictionary = dictionary.float().to(self.device)
         self.l1_penalty = l1_penalty
         self.return_weights = return_weights
         self.return_cosine = return_cosine
@@ -68,7 +68,7 @@ class SPLICE(nn.Module):
             skl_weights = []
             for i in range(embedding.shape[0]):
                 clf.fit(self.dictionary.T.cpu().numpy(), embedding[i,:].cpu().numpy())
-                skl_weights.append(torch.tensor(clf.coef_))
+                skl_weights.append(torch.tensor(clf.coef_, dtype=self.dictionary.dtype))
             weights = torch.stack(skl_weights, dim=0).to(self.device)
         elif self.solver == 'admm':
             weights = self.admm.fit(self.dictionary, embedding).to(self.device)
@@ -87,6 +87,10 @@ class SPLICE(nn.Module):
         recon_text : torch.tensor
             A {batch x CLIP dimensionality} tensor of dense reconstructions.
         """
+        # Ensure dtype compatibility
+        if weights.dtype != self.dictionary.dtype:
+            weights = weights.to(self.dictionary.dtype)
+
         recon_text = weights@self.dictionary
         recon_text = torch.nn.functional.normalize(recon_text, dim=1)
         recon_text = torch.nn.functional.normalize(recon_text + self.text_mean, dim=1)
@@ -105,6 +109,10 @@ class SPLICE(nn.Module):
         recon_image : torch.tensor
             A {batch x CLIP dimensionality} tensor of dense reconstructions.
         """
+        # Ensure dtype compatibility
+        if weights.dtype != self.dictionary.dtype:
+            weights = weights.to(self.dictionary.dtype)
+
         recon_image = weights@self.dictionary
         recon_image = torch.nn.functional.normalize(recon_image, dim=1)
         recon_image = torch.nn.functional.normalize(recon_image + self.image_mean, dim=1)
@@ -154,7 +162,7 @@ class SPLICE(nn.Module):
         if self.return_weights and not self.return_cosine:
             return weights
 
-        recon_image = self.recompose_image(weights)
+        recon_image = self.recompose_image(weights).to(image.dtype)
 
         if self.return_weights and self.return_cosine:
             return (weights, torch.diag(recon_image @ image.T).sum())
